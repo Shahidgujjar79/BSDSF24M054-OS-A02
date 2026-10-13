@@ -12,7 +12,6 @@
 
 enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZ };
 
-// ANSI Color Escape Codes Configuration Structures
 #define COLOR_RESET   "\x1b[0m"
 #define COLOR_BLUE    "\x1b[1;34m"
 #define COLOR_GREEN   "\x1b[1;32m"
@@ -25,7 +24,6 @@ int cmp_names(const void *a, const void *b) {
     return strcmp(x, y);
 }
 
-// Helper function to check if file has archive extensions
 int is_archive(const char *name) {
     size_t len = strlen(name);
     if (len > 4 && strcmp(name + len - 4, ".zip") == 0) return 1;
@@ -34,22 +32,14 @@ int is_archive(const char *name) {
     return 0;
 }
 
-// Feature 6: Dynamic color resolution handler based on metadata
 void print_colorized(const char *name, mode_t mode, int pad_len) {
     const char *color = COLOR_RESET;
-
-    if (S_ISDIR(mode)) {
-        color = COLOR_BLUE;
-    } else if (S_ISLNK(mode)) {
-        color = COLOR_PINK;
-    } else if (is_archive(name)) {
-        color = COLOR_RED;
-    } else if (mode & S_IXUSR) {
-        color = COLOR_GREEN;
-    }
+    if (S_ISDIR(mode)) color = COLOR_BLUE;
+    else if (S_ISLNK(mode)) color = COLOR_PINK;
+    else if (is_archive(name)) color = COLOR_RED;
+    else if (mode & S_IXUSR) color = COLOR_GREEN;
 
     if (pad_len > 0) {
-        // Handle grid aligned padding keeping ANSI codes out of spacing calculations
         char fmt[32];
         snprintf(fmt, sizeof(fmt), "%s%%-%ds%s", color, pad_len, COLOR_RESET);
         printf(fmt, name);
@@ -67,52 +57,31 @@ void mode_to_str(mode_t m, char s[]) {
     s[6] = (m & S_IXGRP) ? 'x' : '-';
     s[7] = (m & S_IROTH) ? 'r' : '-'; s[8] = (m & S_IWOTH) ? 'w' : '-';
     s[9] = (m & S_IXOTH) ? 'x' : '-';
-    
     if (m & S_ISUID) s[3] = (s[3] == 'x') ? 's' : 'S';
     if (m & S_ISGID) s[6] = (s[6] == 'x') ? 's' : 'S';
     if (m & S_ISVTX) s[9] = (s[9] == 'x') ? 't' : 'T';
     s[10] = '\0';
 }
 
-int main(int argc, char *argv[]) {
-    int opt;
-    int mode = MODE_DEFAULT;
-
-    while ((opt = getopt(argc, argv, "lx")) != -1) {
-        switch (opt) {
-            case 'l':
-                mode = MODE_LONG;
-                break;
-            case 'x':
-                mode = MODE_HORIZ;
-                break;
-            default:
-                fprintf(stderr, "Usage: %s [-l] [-x] [directory]\n", argv[0]);
-                exit(EXIT_FAILURE);
-        }
-    }
-
-    const char *dir_path = ".";
-    if (optind < argc) {
-        dir_path = argv[optind];
-    }
-
+// Modular Reusable Directory Listing Function with Recursive Traversal Support
+void list_directory(const char *dir_path, int mode, int recursive_flag, int print_header) {
     DIR *dir = opendir(dir_path);
     if (!dir) {
         perror("Cannot open directory");
-        exit(EXIT_FAILURE);
+        return;
+    }
+
+    if (print_header) {
+        printf("\n%s:\n", dir_path);
     }
 
     char **names = NULL;
-    int n = 0;
-    int capacity = 0;
-    int maxlen = 0;
-
+    int n = 0, capacity = 0, maxlen = 0;
     struct dirent *ep;
+
     while ((ep = readdir(dir)) != NULL) {
-        if (ep->d_name[0] == '.') {
-            continue;
-        }
+        // Skip dotfiles to match standard behavior
+        if (ep->d_name[0] == '.') continue;
 
         if (n >= capacity) {
             capacity = capacity == 0 ? 16 : capacity * 2;
@@ -120,9 +89,7 @@ int main(int argc, char *argv[]) {
         }
         names[n] = strdup(ep->d_name);
         int len = strlen(names[n]);
-        if (len > maxlen) {
-            maxlen = len;
-        }
+        if (len > maxlen) maxlen = len;
         n++;
     }
     closedir(dir);
@@ -133,24 +100,18 @@ int main(int argc, char *argv[]) {
 
     struct winsize w;
     int width = 80;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
-        width = w.ws_col;
-    }
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) width = w.ws_col;
     int colw = maxlen + 2;
 
     if (mode == MODE_LONG) {
         for (int i = 0; i < n; i++) {
-            char full_path[512];
+            char full_path[1024];
             snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, names[i]);
-
             struct stat st;
-            if (lstat(full_path, &st) == -1) {
-                continue;
-            }
+            if (lstat(full_path, &st) == -1) continue;
 
             char modestr[11];
             mode_to_str(st.st_mode, modestr);
-
             struct passwd *pw = getpwuid(st.st_uid);
             struct group *gr = getgrgid(st.st_gid);
             char *t = ctime(&st.st_mtime);
@@ -159,8 +120,6 @@ int main(int argc, char *argv[]) {
                    modestr, (unsigned long)st.st_nlink, 
                    pw ? pw->pw_name : "?", gr ? gr->gr_name : "?", 
                    (long)st.st_size, t + 4);
-            
-            // Feature 6 long listing target parameter extension color rendering
             print_colorized(names[i], st.st_mode, 0);
             printf("\n");
         }
@@ -168,7 +127,7 @@ int main(int argc, char *argv[]) {
     else if (mode == MODE_HORIZ && n > 0) {
         int pos = 0;
         for (int i = 0; i < n; i++) {
-            char full_path[512];
+            char full_path[1024];
             snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, names[i]);
             struct stat st;
             mode_t m = 0;
@@ -192,12 +151,11 @@ int main(int argc, char *argv[]) {
             for (int c = 0; c < cols; c++) {
                 int idx = r + c * rows;
                 if (idx < n) {
-                    char full_path[512];
+                    char full_path[1024];
                     snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, names[idx]);
                     struct stat st;
                     mode_t m = 0;
                     if (lstat(full_path, &st) == 0) m = st.st_mode;
-
                     print_colorized(names[idx], m, colw);
                 }
             }
@@ -205,11 +163,45 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    for (int i = 0; i < n; i++) {
-        free(names[i]);
+    // Secondary Phase: If recursive execution is flagged active, deep crawl directories
+    if (recursive_flag) {
+        for (int i = 0; i < n; i++) {
+            char full_path[1024];
+            snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, names[i]);
+            struct stat st;
+            if (lstat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                list_directory(full_path, mode, recursive_flag, 1);
+            }
+        }
     }
+
+    for (int i = 0; i < n; i++) free(names[i]);
     free(names);
+}
+
+int main(int argc, char *argv[]) {
+    int opt;
+    int mode = MODE_DEFAULT;
+    int recursive_flag = 0;
+
+    // Handle options: -l, -x, and the new -R recursive layout option
+    while ((opt = getopt(argc, argv, "lxR")) != -1) {
+        switch (opt) {
+            case 'l': mode = MODE_LONG; break;
+            case 'x': mode = MODE_HORIZ; break;
+            case 'R': recursive_flag = 1; break;
+            default:
+                fprintf(stderr, "Usage: %s [-l] [-x] [-R] [directory]\n", argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    const char *dir_path = ".";
+    if (optind < argc) {
+        dir_path = argv[optind];
+    }
+
+    list_directory(dir_path, mode, recursive_flag, 0);
 
     return 0;
 }
-
