@@ -12,11 +12,50 @@
 
 enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZ };
 
-// Feature 5: qsort comparator function for alphabetical string comparison
+// ANSI Color Escape Codes Configuration Structures
+#define COLOR_RESET   "\x1b[0m"
+#define COLOR_BLUE    "\x1b[1;34m"
+#define COLOR_GREEN   "\x1b[1;32m"
+#define COLOR_RED     "\x1b[1;31m"
+#define COLOR_PINK    "\x1b[1;35m"
+
 int cmp_names(const void *a, const void *b) {
     const char *x = *(const char **)a;
     const char *y = *(const char **)b;
     return strcmp(x, y);
+}
+
+// Helper function to check if file has archive extensions
+int is_archive(const char *name) {
+    size_t len = strlen(name);
+    if (len > 4 && strcmp(name + len - 4, ".zip") == 0) return 1;
+    if (len > 4 && strcmp(name + len - 4, ".tar") == 0) return 1;
+    if (len > 3 && strcmp(name + len - 3, ".gz") == 0) return 1;
+    return 0;
+}
+
+// Feature 6: Dynamic color resolution handler based on metadata
+void print_colorized(const char *name, mode_t mode, int pad_len) {
+    const char *color = COLOR_RESET;
+
+    if (S_ISDIR(mode)) {
+        color = COLOR_BLUE;
+    } else if (S_ISLNK(mode)) {
+        color = COLOR_PINK;
+    } else if (is_archive(name)) {
+        color = COLOR_RED;
+    } else if (mode & S_IXUSR) {
+        color = COLOR_GREEN;
+    }
+
+    if (pad_len > 0) {
+        // Handle grid aligned padding keeping ANSI codes out of spacing calculations
+        char fmt[32];
+        snprintf(fmt, sizeof(fmt), "%s%%-%ds%s", color, pad_len, COLOR_RESET);
+        printf(fmt, name);
+    } else {
+        printf("%s%s%s", color, name, COLOR_RESET);
+    }
 }
 
 void mode_to_str(mode_t m, char s[]) {
@@ -48,8 +87,7 @@ int main(int argc, char *argv[]) {
                 mode = MODE_HORIZ;
                 break;
             default:
-                
-                          fprintf(stderr, "Usage: %s [-l] [-x] [directory]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-l] [-x] [directory]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -89,7 +127,6 @@ int main(int argc, char *argv[]) {
     }
     closedir(dir);
 
-    // Feature 5: Sort all collected file names alphabetically before rendering
     if (n > 0) {
         qsort(names, n, sizeof(char *), cmp_names);
     }
@@ -103,7 +140,7 @@ int main(int argc, char *argv[]) {
 
     if (mode == MODE_LONG) {
         for (int i = 0; i < n; i++) {
-            char full_path[4096];
+            char full_path[512];
             snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, names[i]);
 
             struct stat st;
@@ -118,20 +155,30 @@ int main(int argc, char *argv[]) {
             struct group *gr = getgrgid(st.st_gid);
             char *t = ctime(&st.st_mtime);
 
-            printf("%s %3lu %-8s %-8s %8ld %.12s %s\n", 
+            printf("%s %3lu %-8s %-8s %8ld %.12s ", 
                    modestr, (unsigned long)st.st_nlink, 
                    pw ? pw->pw_name : "?", gr ? gr->gr_name : "?", 
-                   (long)st.st_size, t + 4, names[i]);
+                   (long)st.st_size, t + 4);
+            
+            // Feature 6 long listing target parameter extension color rendering
+            print_colorized(names[i], st.st_mode, 0);
+            printf("\n");
         }
     } 
     else if (mode == MODE_HORIZ && n > 0) {
         int pos = 0;
         for (int i = 0; i < n; i++) {
+            char full_path[512];
+            snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, names[i]);
+            struct stat st;
+            mode_t m = 0;
+            if (lstat(full_path, &st) == 0) m = st.st_mode;
+
             if (pos + colw > width) {
                 printf("\n");
                 pos = 0;
             }
-            printf("%-*s", colw, names[i]);
+            print_colorized(names[i], m, colw);
             pos += colw;
         }
         printf("\n");
@@ -145,7 +192,13 @@ int main(int argc, char *argv[]) {
             for (int c = 0; c < cols; c++) {
                 int idx = r + c * rows;
                 if (idx < n) {
-                    printf("%-*s", colw, names[idx]);
+                    char full_path[512];
+                    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, names[idx]);
+                    struct stat st;
+                    mode_t m = 0;
+                    if (lstat(full_path, &st) == 0) m = st.st_mode;
+
+                    print_colorized(names[idx], m, colw);
                 }
             }
             printf("\n");
@@ -159,3 +212,4 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+
