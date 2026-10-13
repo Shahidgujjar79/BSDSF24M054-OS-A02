@@ -10,8 +10,14 @@
 #include <time.h>
 #include <sys/ioctl.h>
 
-// Modes representation enum for strict task assignment definitions
 enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZ };
+
+// Feature 5: qsort comparator function for alphabetical string comparison
+int cmp_names(const void *a, const void *b) {
+    const char *x = *(const char **)a;
+    const char *y = *(const char **)b;
+    return strcmp(x, y);
+}
 
 void mode_to_str(mode_t m, char s[]) {
     s[0] = S_ISDIR(m) ? 'd' : S_ISLNK(m) ? 'l' : S_ISCHR(m) ? 'c' :
@@ -33,7 +39,6 @@ int main(int argc, char *argv[]) {
     int opt;
     int mode = MODE_DEFAULT;
 
-    // 1. Parse both flags (-l and -x) inside getopt loop
     while ((opt = getopt(argc, argv, "lx")) != -1) {
         switch (opt) {
             case 'l':
@@ -43,7 +48,8 @@ int main(int argc, char *argv[]) {
                 mode = MODE_HORIZ;
                 break;
             default:
-                fprintf(stderr, "Usage: %s [-l] [-x] [directory]\n", argv[0]);
+                
+                          fprintf(stderr, "Usage: %s [-l] [-x] [directory]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -59,7 +65,6 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Dynamic storage matrix structures
     char **names = NULL;
     int n = 0;
     int capacity = 0;
@@ -71,7 +76,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        // Collect names for default columns and horizontal layout sorting
         if (n >= capacity) {
             capacity = capacity == 0 ? 16 : capacity * 2;
             names = realloc(names, capacity * sizeof(char *));
@@ -85,7 +89,11 @@ int main(int argc, char *argv[]) {
     }
     closedir(dir);
 
-    // Get terminal screen width configuration structures
+    // Feature 5: Sort all collected file names alphabetically before rendering
+    if (n > 0) {
+        qsort(names, n, sizeof(char *), cmp_names);
+    }
+
     struct winsize w;
     int width = 80;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
@@ -93,7 +101,6 @@ int main(int argc, char *argv[]) {
     }
     int colw = maxlen + 2;
 
-    // 2. Output handling block depending on requested mode execution states
     if (mode == MODE_LONG) {
         for (int i = 0; i < n; i++) {
             char full_path[4096];
@@ -118,7 +125,6 @@ int main(int argc, char *argv[]) {
         }
     } 
     else if (mode == MODE_HORIZ && n > 0) {
-        // Feature 4: Across left-to-right printing matrix pattern
         int pos = 0;
         for (int i = 0; i < n; i++) {
             if (pos + colw > width) {
@@ -131,7 +137,6 @@ int main(int argc, char *argv[]) {
         printf("\n");
     } 
     else if (mode == MODE_DEFAULT && n > 0) {
-        // Feature 3: Down-then-across layout processing state flow
         int cols = width / colw; 
         if (cols < 1) cols = 1;
         int rows = (n + cols - 1) / cols;
@@ -147,7 +152,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Clean allocated runtime memory explicit steps execution target
     for (int i = 0; i < n; i++) {
         free(names[i]);
     }
