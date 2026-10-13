@@ -10,17 +10,17 @@
 #include <time.h>
 #include <sys/ioctl.h>
 
+// Modes representation enum for strict task assignment definitions
+enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZ };
+
 void mode_to_str(mode_t m, char s[]) {
     s[0] = S_ISDIR(m) ? 'd' : S_ISLNK(m) ? 'l' : S_ISCHR(m) ? 'c' :
            S_ISBLK(m) ? 'b' : S_ISFIFO(m) ? 'p' : S_ISSOCK(m) ? 's' : '-';
-    s[1] = (m & S_IRUSR) ? 'r' : '-'; 
-    s[2] = (m & S_IWUSR) ? 'w' : '-';
+    s[1] = (m & S_IRUSR) ? 'r' : '-'; s[2] = (m & S_IWUSR) ? 'w' : '-';
     s[3] = (m & S_IXUSR) ? 'x' : '-';
-    s[4] = (m & S_IRGRP) ? 'r' : '-'; 
-    s[5] = (m & S_IWGRP) ? 'w' : '-';
+    s[4] = (m & S_IRGRP) ? 'r' : '-'; s[5] = (m & S_IWGRP) ? 'w' : '-';
     s[6] = (m & S_IXGRP) ? 'x' : '-';
-    s[7] = (m & S_IROTH) ? 'r' : '-'; 
-    s[8] = (m & S_IWOTH) ? 'w' : '-';
+    s[7] = (m & S_IROTH) ? 'r' : '-'; s[8] = (m & S_IWOTH) ? 'w' : '-';
     s[9] = (m & S_IXOTH) ? 'x' : '-';
     
     if (m & S_ISUID) s[3] = (s[3] == 'x') ? 's' : 'S';
@@ -31,15 +31,19 @@ void mode_to_str(mode_t m, char s[]) {
 
 int main(int argc, char *argv[]) {
     int opt;
-    int long_flag = 0;
+    int mode = MODE_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "l")) != -1) {
+    // 1. Parse both flags (-l and -x) inside getopt loop
+    while ((opt = getopt(argc, argv, "lx")) != -1) {
         switch (opt) {
             case 'l':
-                long_flag = 1;
+                mode = MODE_LONG;
+                break;
+            case 'x':
+                mode = MODE_HORIZ;
                 break;
             default:
-                fprintf(stderr, "Usage: %s [-l] [directory]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-l] [-x] [directory]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -55,7 +59,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Dynamic array storage structures for Column Display
+    // Dynamic storage matrix structures
     char **names = NULL;
     int n = 0;
     int capacity = 0;
@@ -67,14 +71,36 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        // Long listing needs absolute checks inline
-        if (long_flag) {
+        // Collect names for default columns and horizontal layout sorting
+        if (n >= capacity) {
+            capacity = capacity == 0 ? 16 : capacity * 2;
+            names = realloc(names, capacity * sizeof(char *));
+        }
+        names[n] = strdup(ep->d_name);
+        int len = strlen(names[n]);
+        if (len > maxlen) {
+            maxlen = len;
+        }
+        n++;
+    }
+    closedir(dir);
+
+    // Get terminal screen width configuration structures
+    struct winsize w;
+    int width = 80;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
+        width = w.ws_col;
+    }
+    int colw = maxlen + 2;
+
+    // 2. Output handling block depending on requested mode execution states
+    if (mode == MODE_LONG) {
+        for (int i = 0; i < n; i++) {
             char full_path[4096];
-            snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, ep->d_name);
+            snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, names[i]);
 
             struct stat st;
             if (lstat(full_path, &st) == -1) {
-                perror("lstat failed");
                 continue;
             }
 
@@ -88,37 +114,28 @@ int main(int argc, char *argv[]) {
             printf("%s %3lu %-8s %-8s %8ld %.12s %s\n", 
                    modestr, (unsigned long)st.st_nlink, 
                    pw ? pw->pw_name : "?", gr ? gr->gr_name : "?", 
-                   (long)st.st_size, t + 4, ep->d_name);
-        } else {
-            // Collect names inside the dynamic array allocation for column printing
-            if (n >= capacity) {
-                capacity = capacity == 0 ? 16 : capacity * 2;
-                names = realloc(names, capacity * sizeof(char *));
-            }
-            names[n] = strdup(ep->d_name);
-            int len = strlen(names[n]);
-            if (len > maxlen) {
-                maxlen = len;
-            }
-            n++;
+                   (long)st.st_size, t + 4, names[i]);
         }
-    }
-    closedir(dir);
-
-    // 5. Default Brief Column display grid printer execution layout
-    if (!long_flag && n > 0) {
-        struct winsize w;
-        int width = 80; // fallback standard layout width
-        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
-            width = w.ws_col;
+    } 
+    else if (mode == MODE_HORIZ && n > 0) {
+        // Feature 4: Across left-to-right printing matrix pattern
+        int pos = 0;
+        for (int i = 0; i < n; i++) {
+            if (pos + colw > width) {
+                printf("\n");
+                pos = 0;
+            }
+            printf("%-*s", colw, names[i]);
+            pos += colw;
         }
-
-        int colw = maxlen + 2; // Longest item name + 2 spacing buffers
+        printf("\n");
+    } 
+    else if (mode == MODE_DEFAULT && n > 0) {
+        // Feature 3: Down-then-across layout processing state flow
         int cols = width / colw; 
         if (cols < 1) cols = 1;
         int rows = (n + cols - 1) / cols;
 
-        // Down-then-across structural nested printing loop
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 int idx = r + c * rows;
@@ -128,14 +145,13 @@ int main(int argc, char *argv[]) {
             }
             printf("\n");
         }
-
-        // Clean allocated runtime memory blocks explicitly
-        for (int i = 0; i < n; i++) {
-            free(names[i]);
-        }
-        free(names);
     }
+
+    // Clean allocated runtime memory explicit steps execution target
+    for (int i = 0; i < n; i++) {
+        free(names[i]);
+    }
+    free(names);
 
     return 0;
 }
-
